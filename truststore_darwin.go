@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"howett.net/plist"
 )
@@ -50,8 +51,16 @@ var trustSettingsData = []byte(`
 `)
 
 func (m *mkcert) installPlatform() bool {
-	cmd := commandWithSudo("security", "add-trusted-cert", "-d", "-k", "/Library/Keychains/System.keychain", filepath.Join(m.CAROOT, rootName))
+	cmd := commandExecute("security", "default-keychain")
 	out, err := cmd.CombinedOutput()
+	fatalIfCmdErr(err, "security default-keychain", out)
+	keychain := strings.Trim(string(out), " \n\"")
+	if !pathExists(keychain) {
+		keychain = "/Library/Keychains/System.keychain"
+	}
+
+	cmd = commandWithSudo("security", "add-trusted-cert", "-k", keychain, filepath.Join(m.CAROOT, rootName))
+	out, err = cmd.CombinedOutput()
 	fatalIfCmdErr(err, "security add-trusted-cert", out)
 
 	// Make trustSettings explicit, as older Go does not know the defaults.

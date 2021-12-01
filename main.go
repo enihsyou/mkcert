@@ -391,3 +391,7 @@ func commandWithSudo(cmd ...string) *exec.Cmd {
 	}
 	return exec.Command("sudo", append([]string{"--prompt=Sudo password:", "--"}, cmd...)...)
 }
+
+func commandExecute(cmd ...string) *exec.Cmd {
+	return exec.Command(cmd[0], cmd[1:]...)
+}
