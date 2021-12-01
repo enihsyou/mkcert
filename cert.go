@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	pkcs12 "software.sslmate.com/src/go-pkcs12"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 var userAndHostname string
@@ -64,8 +64,15 @@ func (m *mkcert) makeCert(hosts []string) {
 	tpl := &x509.Certificate{
 		SerialNumber: randomSerialNumber(),
 		Subject: pkix.Name{
-			Organization:       []string{"mkcert development certificate"},
-			OrganizationalUnit: []string{userAndHostname},
+			// inherent subject from ca
+			Country:            m.caCert.Subject.Country,
+			Organization:       m.caCert.Subject.Organization,
+			OrganizationalUnit: m.caCert.Subject.OrganizationalUnit,
+			Locality:           m.caCert.Subject.Locality,
+			Province:           m.caCert.Subject.Province,
+			StreetAddress:      m.caCert.Subject.StreetAddress,
+			PostalCode:         m.caCert.Subject.PostalCode,
+			ExtraNames:         m.caCert.Subject.Names,
 		},
 
 		NotBefore: time.Now(), NotAfter: expiration,
