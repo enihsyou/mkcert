@@ -106,27 +106,42 @@ func (m *mkcert) makeCert(hosts []string) {
 	// Common Name in the UI. See issue #115.
 	if m.pkcs12 {
 		tpl.Subject.CommonName = hosts[0]
+	} else if len(tpl.Subject.Organization) > 0 {
+		tpl.Subject.CommonName = tpl.Subject.Organization[0] + " Signed Certificate"
+		var oidCommonName = asn1.ObjectIdentifier([]int{2, 5, 4, 3})
+		for idx, obj := range tpl.Subject.ExtraNames {
+			if obj.Type.Equal(oidCommonName) {
+				obj.Value = tpl.Subject.CommonName
+				tpl.Subject.ExtraNames[idx] = obj
+				break
+			}
+		}
 	}
-
 	cert, err := x509.CreateCertificate(rand.Reader, tpl, m.caCert, pub, m.caKey)
 	fatalIfErr(err, "failed to generate certificate")
 
 	certFile, keyFile, p12File := m.fileNames(hosts)
+	chainFile := certFile[:len(certFile)-len(".pem")] + "-chain.pem"
 
 	if !m.pkcs12 {
 		certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert})
 		privDER, err := x509.MarshalPKCS8PrivateKey(priv)
 		fatalIfErr(err, "failed to encode certificate key")
 		privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
+		fullPEM := append(append([]byte(nil), certPEM...), m.caCertFullPEM...)
 
 		if certFile == keyFile {
 			err = ioutil.WriteFile(keyFile, append(certPEM, privPEM...), 0600)
 			fatalIfErr(err, "failed to save certificate and key")
+			err = ioutil.WriteFile(chainFile, append(fullPEM, privPEM...), 0600)
+			fatalIfErr(err, "failed to save certificate chain and key")
 		} else {
 			err = ioutil.WriteFile(certFile, certPEM, 0644)
 			fatalIfErr(err, "failed to save certificate")
 			err = ioutil.WriteFile(keyFile, privPEM, 0600)
 			fatalIfErr(err, "failed to save certificate key")
+			err = ioutil.WriteFile(chainFile, fullPEM, 0644)
+			fatalIfErr(err, "failed to save certificate")
 		}
 	} else {
 		domainCert, _ := x509.ParseCertificate(cert)
@@ -297,6 +312,7 @@ func (m *mkcert) loadCA() {
 	if certDERBlock == nil || certDERBlock.Type != "CERTIFICATE" {
 		log.Fatalln("ERROR: failed to read the CA certificate: unexpected content")
 	}
+	m.caCertFullPEM = certPEMBlock
 	m.caCert, err = x509.ParseCertificate(certDERBlock.Bytes)
 	fatalIfErr(err, "failed to parse the CA certificate")
 

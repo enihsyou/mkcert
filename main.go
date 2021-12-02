@@ -162,6 +162,9 @@ type mkcert struct {
 	caCert *x509.Certificate
 	caKey  crypto.PrivateKey
 
+	// Remember full ca cert to construct ca bundle or chain.
+	caCertFullPEM []byte
+
 	// The system cert pool is only loaded once. After installing the root, checks
 	// will keep failing until the next execution. TODO: maybe execve?
 	// https://github.com/golang/go/issues/24540 (thanks, myself)
