@@ -98,6 +98,7 @@ func main() {
 		clientFlag    = flag.Bool("client", false, "")
 		helpFlag      = flag.Bool("help", false, "")
 		carootFlag    = flag.Bool("CAROOT", false, "")
+		genCAFlag     = flag.String("ca", "", "sign intermediate ca")
 		csrFlag       = flag.String("csr", "", "")
 		certFileFlag  = flag.String("cert-file", "", "")
 		keyFileFlag   = flag.String("key-file", "", "")
@@ -144,6 +145,7 @@ func main() {
 	}
 	(&mkcert{
 		installMode: *installFlag, uninstallMode: *uninstallFlag, csrPath: *csrFlag,
+		genCA:  *genCAFlag,
 		pkcs12: *pkcs12Flag, ecdsa: *ecdsaFlag, client: *clientFlag,
 		certFile: *certFileFlag, keyFile: *keyFileFlag, p12File: *p12FileFlag,
 	}).Run(flag.Args())
@@ -155,6 +157,7 @@ const rootKeyName = "rootCA-key.pem"
 type mkcert struct {
 	installMode, uninstallMode bool
 	pkcs12, ecdsa, client      bool
+	genCA                      string
 	keyFile, certFile, p12File string
 	csrPath                    string
 
@@ -208,6 +211,10 @@ func (m *mkcert) Run(args []string) {
 
 	if m.csrPath != "" {
 		m.makeCertFromCSR()
+		return
+	}
+	if m.genCA != "" {
+		m.makeIntermediateCA()
 		return
 	}
 

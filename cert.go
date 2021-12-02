@@ -60,6 +60,8 @@ func (m *mkcert) makeCert(hosts []string) {
 	// 825 days, the limit that macOS/iOS apply to all certificates,
 	// including custom roots. See https://support.apple.com/en-us/HT210176.
 	expiration := time.Now().AddDate(2, 3, 0)
+	// only last for 3 months for muscle memory
+	expiration = time.Now().AddDate(0, 3, 0)
 
 	tpl := &x509.Certificate{
 		SerialNumber: randomSerialNumber(),
@@ -107,15 +109,7 @@ func (m *mkcert) makeCert(hosts []string) {
 	if m.pkcs12 {
 		tpl.Subject.CommonName = hosts[0]
 	} else if len(tpl.Subject.Organization) > 0 {
-		tpl.Subject.CommonName = tpl.Subject.Organization[0] + " Signed Certificate"
-		var oidCommonName = asn1.ObjectIdentifier([]int{2, 5, 4, 3})
-		for idx, obj := range tpl.Subject.ExtraNames {
-			if obj.Type.Equal(oidCommonName) {
-				obj.Value = tpl.Subject.CommonName
-				tpl.Subject.ExtraNames[idx] = obj
-				break
-			}
-		}
+		prepareCommonName(tpl, tpl.Subject.Organization[0]+" Signed Certificate")
 	}
 	cert, err := x509.CreateCertificate(rand.Reader, tpl, m.caCert, pub, m.caKey)
 	fatalIfErr(err, "failed to generate certificate")
@@ -167,6 +161,18 @@ func (m *mkcert) makeCert(hosts []string) {
 	log.Printf("It will expire on %s 🗓\n\n", expiration.Format("2 January 2006"))
 }
 
+func prepareCommonName(tpl *x509.Certificate, cn string) {
+	tpl.Subject.CommonName = cn
+	var oidCommonName = asn1.ObjectIdentifier([]int{2, 5, 4, 3})
+	for idx, obj := range tpl.Subject.ExtraNames {
+		if obj.Type.Equal(oidCommonName) {
+			obj.Value = tpl.Subject.CommonName
+			tpl.Subject.ExtraNames[idx] = obj
+			break
+		}
+	}
+}
+
 func (m *mkcert) printHosts(hosts []string) {
 	secondLvlWildcardRegexp := regexp.MustCompile(`(?i)^\*\.[0-9a-z_-]+$`)
 	log.Printf("\nCreated a new certificate valid for the following names 📜")
@@ -186,6 +192,9 @@ func (m *mkcert) printHosts(hosts []string) {
 }
 
 func (m *mkcert) generateKey(rootCA bool) (crypto.PrivateKey, error) {
+	if load := loadKeyFromFile(m.keyFile); load != nil {
+		return load, nil
+	}
 	if m.ecdsa {
 		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	}
@@ -193,6 +202,25 @@ func (m *mkcert) generateKey(rootCA bool) (crypto.PrivateKey, error) {
 		return rsa.GenerateKey(rand.Reader, 3072)
 	}
 	return rsa.GenerateKey(rand.Reader, 2048)
+}
+
+func loadKeyFromFile(path string) crypto.PrivateKey {
+	if path == "" || !pathExists(path) {
+		return nil
+	}
+	keyPEMBlock, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	keyDERBlock, _ := pem.Decode(keyPEMBlock)
+	if keyDERBlock == nil || keyDERBlock.Type != "PRIVATE KEY" {
+		return nil
+	}
+	priv, err := x509.ParsePKCS8PrivateKey(keyDERBlock.Bytes)
+	if err == nil {
+		return priv
+	}
+	return nil
 }
 
 func (m *mkcert) fileNames(hosts []string) (certFile, keyFile, p12File string) {
@@ -384,6 +412,81 @@ func (m *mkcert) newCA() {
 	fatalIfErr(err, "failed to save CA certificate")
 
 	log.Printf("Created a new local CA 💥\n")
+}
+
+func (m *mkcert) makeIntermediateCA() {
+	if m.caKey == nil {
+		log.Fatalln("ERROR: can't create new certificates because the CA key (rootCA-key.pem) is missing")
+	}
+	priv, err := m.generateKey(true)
+	fatalIfErr(err, "failed to generate the CA key")
+	pub := priv.(crypto.Signer).Public()
+
+	spkiASN1, err := x509.MarshalPKIXPublicKey(pub)
+	fatalIfErr(err, "failed to encode public key")
+
+	var spki struct {
+		Algorithm        pkix.AlgorithmIdentifier
+		SubjectPublicKey asn1.BitString
+	}
+	_, err = asn1.Unmarshal(spkiASN1, &spki)
+	fatalIfErr(err, "failed to decode public key")
+
+	skid := sha1.Sum(spki.SubjectPublicKey.Bytes)
+
+	tpl := &x509.Certificate{
+		SerialNumber: randomSerialNumber(),
+		Subject: pkix.Name{
+			// inherent subject from ca
+			Country:            m.caCert.Subject.Country,
+			Organization:       m.caCert.Subject.Organization,
+			OrganizationalUnit: m.caCert.Subject.OrganizationalUnit,
+			Locality:           m.caCert.Subject.Locality,
+			Province:           m.caCert.Subject.Province,
+			StreetAddress:      m.caCert.Subject.StreetAddress,
+			PostalCode:         m.caCert.Subject.PostalCode,
+			ExtraNames:         m.caCert.Subject.Names,
+			// The CommonName is required by iOS to show the certificate in the
+			// "Certificate Trust Settings" menu.
+			// https://github.com/FiloSottile/mkcert/issues/47
+			CommonName: m.genCA,
+		},
+		SubjectKeyId: skid[:],
+
+		NotAfter:  time.Now().AddDate(3, 0, 0),
+		NotBefore: time.Now(),
+
+		KeyUsage: x509.KeyUsageCertSign,
+
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            1, // allow sign another ca
+		MaxPathLenZero:        false,
+	}
+	prepareCommonName(tpl, m.genCA)
+
+	cert, err := x509.CreateCertificate(rand.Reader, tpl, m.caCert, pub, m.caKey)
+	fatalIfErr(err, "failed to generate CA certificate")
+
+	var keyFile = m.genCA + "-CA-key.pem"
+	var certFile = m.genCA + "-CA.pem"
+	var chainFile = m.genCA + "-CA-chain.pem"
+
+	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	fatalIfErr(err, "failed to encode CA key")
+	err = ioutil.WriteFile(keyFile, pem.EncodeToMemory(
+		&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}), 0400)
+	fatalIfErr(err, "failed to save CA key")
+
+	err = ioutil.WriteFile(certFile, pem.EncodeToMemory(
+		&pem.Block{Type: "CERTIFICATE", Bytes: cert}), 0644)
+	fatalIfErr(err, "failed to save CA certificate")
+
+	err = ioutil.WriteFile(chainFile, append(pem.EncodeToMemory(
+		&pem.Block{Type: "CERTIFICATE", Bytes: cert}), m.caCertFullPEM...), 0644)
+	fatalIfErr(err, "failed to save CA certificate chain")
+
+	log.Printf("Signed a new local intermediate CA 💥\n")
 }
 
 func (m *mkcert) caUniqueName() string {
