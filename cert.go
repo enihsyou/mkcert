@@ -60,8 +60,7 @@ func (m *mkcert) makeCert(hosts []string) {
 	// 825 days, the limit that macOS/iOS apply to all certificates,
 	// including custom roots. See https://support.apple.com/en-us/HT210176.
 	expiration := time.Now().AddDate(2, 3, 0)
-	// only last for 3 months for muscle memory
-	expiration = time.Now().AddDate(0, 3, 0)
+	expiration = simpleCertExpiration()
 
 	tpl := &x509.Certificate{
 		SerialNumber: randomSerialNumber(),
@@ -276,6 +275,7 @@ func (m *mkcert) makeCertFromCSR() {
 	fatalIfErr(csr.CheckSignature(), "invalid CSR signature")
 
 	expiration := time.Now().AddDate(2, 3, 0)
+	expiration = simpleCertExpiration()
 	tpl := &x509.Certificate{
 		SerialNumber:    randomSerialNumber(),
 		Subject:         csr.Subject,
@@ -315,15 +315,32 @@ func (m *mkcert) makeCertFromCSR() {
 	for _, uri := range c.URIs {
 		hosts = append(hosts, uri.String())
 	}
-	certFile, _, _ := m.fileNames(hosts)
+	certFile, _, p12File := m.fileNames(hosts)
+	chainFile := certFile[:len(certFile)-len(".pem")] + "-chain.pem"
 
-	err = ioutil.WriteFile(certFile, pem.EncodeToMemory(
-		&pem.Block{Type: "CERTIFICATE", Bytes: cert}), 0644)
-	fatalIfErr(err, "failed to save certificate")
+	if !m.pkcs12 {
+		certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert})
+		fullPEM := append(append([]byte(nil), certPEM...), m.caCertFullPEM...)
+		err = ioutil.WriteFile(certFile, certPEM, 0644)
+		fatalIfErr(err, "failed to save certificate")
+		err = ioutil.WriteFile(chainFile, fullPEM, 0644)
+		fatalIfErr(err, "failed to save certificate")
+	} else {
+		priv := loadKeyFromFile(m.keyFile)
+		domainCert, _ := x509.ParseCertificate(cert)
+		pfxData, err := pkcs12.Encode(rand.Reader, priv, domainCert, []*x509.Certificate{m.caCert}, "changeit")
+		fatalIfErr(err, "failed to generate PKCS#12")
+		err = ioutil.WriteFile(p12File, pfxData, 0644)
+		fatalIfErr(err, "failed to save PKCS#12")
+	}
 
 	m.printHosts(hosts)
 
-	log.Printf("\nThe certificate is at \"%s\" ✅\n\n", certFile)
+	log.Printf("\nThe certificate is at \"%s\" ✅\n", certFile)
+	if m.pkcs12 {
+		log.Printf("\nThe PKCS#12 bundle is at \"%s\" ✅\n", p12File)
+		log.Printf("\nThe legacy PKCS#12 encryption password is the often hardcoded default \"changeit\" ℹ️\n\n")
+	}
 
 	log.Printf("It will expire on %s 🗓\n\n", expiration.Format("2 January 2006"))
 }
@@ -491,4 +508,9 @@ func (m *mkcert) makeIntermediateCA() {
 
 func (m *mkcert) caUniqueName() string {
 	return "mkcert development CA " + m.caCert.SerialNumber.String()
+}
+
+func simpleCertExpiration() time.Time {
+	// only last for 3 months for muscle memory
+	return time.Now().AddDate(0, 3, 0)
 }
