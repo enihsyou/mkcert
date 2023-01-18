@@ -102,6 +102,9 @@ func (m *mkcert) makeCert(hosts []string) {
 		tpl.ExtKeyUsage = append(tpl.ExtKeyUsage, x509.ExtKeyUsageEmailProtection)
 	}
 
+	if m.commonName != "" {
+		prepareCommonName(tpl, m.commonName)
+	} else
 	// IIS (the main target of PKCS #12 files), only shows the deprecated
 	// Common Name in the UI. See issue #115.
 	if m.pkcs12 {

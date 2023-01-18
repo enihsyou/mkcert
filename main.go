@@ -51,6 +51,9 @@ const advancedUsage = `Advanced options:
 	-cert-file FILE, -key-file FILE, -p12-file FILE
 	    Customize the output paths.
 
+	-common-name NAME
+	    Certificate common name line.
+
 	-client
 	    Generate a certificate for client authentication.
 
@@ -104,6 +107,8 @@ func main() {
 		keyFileFlag   = flag.String("key-file", "", "")
 		p12FileFlag   = flag.String("p12-file", "", "")
 		versionFlag   = flag.Bool("version", false, "")
+
+		commonNameFlag = flag.String("common-name", "", "common name")
 	)
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), shortUsage)
@@ -151,6 +156,7 @@ func main() {
 		genCA:  *genCAFlag,
 		pkcs12: *pkcs12Flag, ecdsa: *ecdsaFlag, client: *clientFlag,
 		certFile: *certFileFlag, keyFile: *keyFileFlag, p12File: *p12FileFlag,
+		commonName: *commonNameFlag,
 	}).Run(flag.Args())
 }
 
@@ -163,6 +169,7 @@ type mkcert struct {
 	genCA                      string
 	keyFile, certFile, p12File string
 	csrPath                    string
+	commonName                 string
 
 	CAROOT string
 	caCert *x509.Certificate
